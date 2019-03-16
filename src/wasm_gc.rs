@@ -1,19 +1,18 @@
 // This is copied almost verbatim from: https://github.com/alexcrichton/wasm-gc
 // Commit: b261ea6339c9987c81fcc0c691189018cd514928
 
-use std::path::Path;
 use std::collections::{BTreeSet, HashSet};
+use std::path::Path;
 use std::str;
 
-use rustc_demangle;
 use parity_wasm::elements::*;
+use rustc_demangle;
 
 pub fn run<I: AsRef<Path>, O: AsRef<Path>>(input: I, output: O) {
     let input = input.as_ref();
     let output = output.as_ref();
 
-    let mut module = deserialize_file(input)
-        .expect("Failed to load module");
+    let mut module = deserialize_file(input).expect("Failed to load module");
 
     let analysis = {
         let mut cx = LiveContext::new(&module);
@@ -121,22 +120,21 @@ pub fn run<I: AsRef<Path>, O: AsRef<Path>>(input: I, output: O) {
     let cx = RemapContext::new(&module, &analysis);
     for i in (0..module.sections().len()).rev() {
         let retain = match module.sections_mut()[i] {
-            Section::Reloc(_) |
-            Section::Unparsed { .. } => {
+            Section::Reloc(_) | Section::Unparsed { .. } => {
                 // info!("unparsed section");
-                continue
+                continue;
             }
             Section::Name(_) => {
                 // Section::Name is only emitted when calling module.parse_names()
                 unreachable!()
-            },
+            }
             Section::Custom(ref mut s) if s.name() == "name" => {
                 cx.remap_name_section(s);
-                continue
+                continue;
             }
             Section::Custom(_) => {
                 // info!("skipping custom section: {}", s.name());
-                continue
+                continue;
             }
             Section::Type(ref mut s) => cx.remap_type_section(s),
             Section::Import(ref mut s) => cx.remap_import_section(s),
@@ -145,7 +143,10 @@ pub fn run<I: AsRef<Path>, O: AsRef<Path>>(input: I, output: O) {
             Section::Memory(ref mut s) => cx.remap_memory_section(s),
             Section::Global(ref mut s) => cx.remap_global_section(s),
             Section::Export(ref mut s) => cx.remap_export_section(s),
-            Section::Start(ref mut i) => { cx.remap_function_idx(i); true }
+            Section::Start(ref mut i) => {
+                cx.remap_function_idx(i);
+                true
+            }
             Section::Element(ref mut s) => cx.remap_element_section(s),
             Section::Code(ref mut s) => cx.remap_code_section(s),
             Section::Data(ref mut s) => cx.remap_data_section(s),
@@ -226,12 +227,15 @@ impl<'a> LiveContext<'a> {
 
     fn add_function(&mut self, mut idx: u32) {
         if !self.analysis.functions.insert(idx) {
-            return
+            return;
         }
         if let Some(imports) = self.import_section {
             if idx < imports.functions() as u32 {
                 // debug!("adding import: {}", idx);
-                let import = imports.entries().get(idx as usize).expect("expected an imported function with this index");
+                let import = imports
+                    .entries()
+                    .get(idx as usize)
+                    .expect("expected an imported function with this index");
                 self.analysis.imports.insert(idx);
                 return self.add_import_entry(import, idx);
             }
@@ -248,7 +252,7 @@ impl<'a> LiveContext<'a> {
 
     fn add_table(&mut self, idx: u32) {
         if !self.analysis.tables.insert(idx) {
-            return
+            return;
         }
         let tables = self.table_section.expect("no table section");
         let table = &tables.entries()[idx as usize];
@@ -257,15 +261,18 @@ impl<'a> LiveContext<'a> {
 
     fn add_memory(&mut self, idx: u32) {
         if !self.analysis.memories.insert(idx) {
-            return
+            return;
         }
-        let memories = self.memories.as_ref().expect("no memory section or imported memory");
+        let memories = self
+            .memories
+            .as_ref()
+            .expect("no memory section or imported memory");
         assert!(memories.has_entry(idx as usize));
     }
 
     fn add_global(&mut self, idx: u32) {
         if !self.analysis.globals.insert(idx) {
-            return
+            return;
         }
         let globals = self.global_section.expect("no global section");
         let global = &globals.entries()[idx as usize];
@@ -285,7 +292,7 @@ impl<'a> LiveContext<'a> {
 
     fn add_type(&mut self, idx: u32) {
         if !self.analysis.types.insert(idx) {
-            return
+            return;
         }
         let types = self.type_section.expect("no types section");
         match types.types()[idx as usize] {
@@ -325,13 +332,12 @@ impl<'a> LiveContext<'a> {
 
     fn add_instruction(&mut self, code: &Instruction) {
         match *code {
-            Instruction::Block(ref b) |
-            Instruction::Loop(ref b) |
-            Instruction::If(ref b) => self.add_block_type(b),
+            Instruction::Block(ref b) | Instruction::Loop(ref b) | Instruction::If(ref b) => {
+                self.add_block_type(b)
+            }
             Instruction::Call(f) => self.add_function(f),
             Instruction::CallIndirect(t, _) => self.add_type(t),
-            Instruction::GetGlobal(i) |
-            Instruction::SetGlobal(i) => self.add_global(i),
+            Instruction::GetGlobal(i) | Instruction::SetGlobal(i) => self.add_global(i),
             _ => {}
         }
     }
@@ -345,7 +351,7 @@ impl<'a> LiveContext<'a> {
 
     fn add_export_entry(&mut self, entry: &ExportEntry, idx: u32) {
         if self.blacklist.contains(entry.field()) {
-            return
+            return;
         }
         self.analysis.exports.insert(idx);
         match *entry.internal() {
@@ -359,12 +365,12 @@ impl<'a> LiveContext<'a> {
     fn add_import_entry(&mut self, entry: &ImportEntry, idx: u32) {
         match *entry.external() {
             External::Function(i) => self.add_type(i),
-            External::Table(_) => {},
+            External::Table(_) => {}
             External::Memory(_) => {
                 self.add_memory(0);
                 self.analysis.imports.insert(idx);
-            },
-            External::Global(_) => {},
+            }
+            External::Global(_) => {}
         }
     }
 
@@ -405,38 +411,41 @@ impl<'a> RemapContext<'a> {
                     offset += 1;
                 }
             }
-            return v
+            return v;
         }
 
         let nfuncs = m.function_section().map(|m| m.entries().len() as u32);
         let nimported_functions = m.import_section().map(|m| {
             m.entries()
                 .into_iter()
-                .filter(|entry| {
-                    match *entry.external() {
-                        External::Function(_) => true,
-                        _ => false,
-                    }
+                .filter(|entry| match *entry.external() {
+                    External::Function(_) => true,
+                    _ => false,
                 })
                 .count() as u32
         });
-        let functions = remap(nfuncs.unwrap_or(0) + nimported_functions.unwrap_or(0),
-                              &analysis.functions);
+        let functions = remap(
+            nfuncs.unwrap_or(0) + nimported_functions.unwrap_or(0),
+            &analysis.functions,
+        );
 
         let nglobals = m.global_section().map(|m| m.entries().len() as u32);
         let globals = remap(nglobals.unwrap_or(0), &analysis.globals);
 
-        let nmem = m.memory_section().map(|m| m.entries().len() as u32).unwrap_or_else(|| {
-            if let Some(import_section) = m.import_section() {
-                for entry in import_section.entries() {
-                    if let External::Memory(_) = *entry.external() {
-                        return 1;
+        let nmem = m
+            .memory_section()
+            .map(|m| m.entries().len() as u32)
+            .unwrap_or_else(|| {
+                if let Some(import_section) = m.import_section() {
+                    for entry in import_section.entries() {
+                        if let External::Memory(_) = *entry.external() {
+                            return 1;
+                        }
                     }
                 }
-            }
 
-            0
-        });
+                0
+            });
         let memories = remap(nmem, &analysis.memories);
 
         let ntables = m.table_section().map(|m| m.entries().len() as u32);
@@ -460,11 +469,7 @@ impl<'a> RemapContext<'a> {
         self.retain_offset(set, list, 0, name);
     }
 
-    fn retain_offset<T>(&self,
-                        set: &BTreeSet<u32>,
-                        list: &mut Vec<T>,
-                        offset: u32,
-                        _name: &str) {
+    fn retain_offset<T>(&self, set: &BTreeSet<u32>, list: &mut Vec<T>, offset: u32, _name: &str) {
         for i in (0..list.len()).rev().map(|x| x as u32) {
             if !set.contains(&(i + offset)) {
                 // debug!("removing {} {}", name, i + offset);
@@ -519,10 +524,12 @@ impl<'a> RemapContext<'a> {
     }
 
     fn remap_function_section(&self, s: &mut FunctionSection) -> bool {
-        self.retain_offset(&self.analysis.functions,
-                           s.entries_mut(),
-                           self.nimported_functions,
-                           "function");
+        self.retain_offset(
+            &self.analysis.functions,
+            s.entries_mut(),
+            self.nimported_functions,
+            "function",
+        );
         for f in s.entries_mut() {
             self.remap_func(f);
         }
@@ -626,13 +633,14 @@ impl<'a> RemapContext<'a> {
 
     fn remap_instruction(&self, op: &mut Instruction) {
         match *op {
-            Instruction::Block(ref mut b) |
-            Instruction::Loop(ref mut b) |
-            Instruction::If(ref mut b) => self.remap_block_type(b),
+            Instruction::Block(ref mut b)
+            | Instruction::Loop(ref mut b)
+            | Instruction::If(ref mut b) => self.remap_block_type(b),
             Instruction::Call(ref mut f) => self.remap_function_idx(f),
             Instruction::CallIndirect(ref mut t, _) => self.remap_type_idx(t),
-            Instruction::GetGlobal(ref mut i) |
-            Instruction::SetGlobal(ref mut i) => self.remap_global_idx(i),
+            Instruction::GetGlobal(ref mut i) | Instruction::SetGlobal(ref mut i) => {
+                self.remap_global_idx(i)
+            }
             _ => {}
         }
     }
@@ -685,7 +693,8 @@ impl<'a> RemapContext<'a> {
 
     fn remap_name_section(&self, s: &mut CustomSection) {
         let data = s.payload_mut();
-        *data = self.rebuild_name_section(data)
+        *data = self
+            .rebuild_name_section(data)
             .expect("malformed name section");
     }
 
@@ -730,7 +739,7 @@ impl<'a> RemapContext<'a> {
                         let map = self.decode_name_map(&mut bytes)?;
                         let new_index = self.functions[index as usize];
                         if new_index == u32::max_value() {
-                            continue
+                            continue;
                         }
                         locals.push((new_index, map));
                     }
@@ -753,9 +762,7 @@ impl<'a> RemapContext<'a> {
         Ok(res)
     }
 
-    fn decode_name_map<'b>(&self, bytes: &mut &'b [u8])
-        -> Result<Vec<(u32, &'b str)>, Error>
-    {
+    fn decode_name_map<'b>(&self, bytes: &mut &'b [u8]) -> Result<Vec<(u32, &'b str)>, Error> {
         let count = u32::from(VarUint32::deserialize(bytes)?);
         let mut names = Vec::with_capacity(count as usize);
         for _ in 0..count {
@@ -763,8 +770,7 @@ impl<'a> RemapContext<'a> {
             let name_len = u32::from(VarUint32::deserialize(bytes)?);
             let (name, rest) = bytes.split_at(name_len as usize);
             *bytes = rest;
-            let name = str::from_utf8(name)
-                .expect("ill-formed utf-8 in name subsection");
+            let name = str::from_utf8(name).expect("ill-formed utf-8 in name subsection");
             names.push((index, name));
         }
         Ok(names)

@@ -1,125 +1,152 @@
-use std::path::{Path, PathBuf};
 use std::fs::{self, File};
 use std::io::{self, Read, Write};
+use std::path::{Path, PathBuf};
 
-use sha1::Sha1;
-use parity_wasm;
 use cargo_shim::BuildConfig;
+use parity_wasm;
 use serde_json;
+use sha1::Sha1;
 
 use wasm_gc;
 
 use wasm_context::Context;
-use wasm_inline_js;
 use wasm_export_main;
 use wasm_export_table;
 use wasm_hook_grow;
+use wasm_inline_js;
 use wasm_intrinsics;
-use wasm_runtime::{self, RuntimeKind};
 use wasm_js_export;
 use wasm_js_snippet;
+use wasm_runtime::{self, RuntimeKind};
 
 #[derive(Serialize, Deserialize)]
 struct Metadata {
-    wasm_hash: String
+    wasm_hash: String,
 }
 
-fn get_sha1sum< P: AsRef< Path > >( path: P ) -> io::Result< String > {
+fn get_sha1sum<P: AsRef<Path>>(path: P) -> io::Result<String> {
     let path = path.as_ref();
-    let mut fp = File::open( path )?;
+    let mut fp = File::open(path)?;
     let mut hasher = Sha1::new();
 
     let mut buffer = Vec::new();
-    buffer.resize( 1024 * 1024, 0 );
+    buffer.resize(1024 * 1024, 0);
     loop {
-        match fp.read( &mut buffer )? {
+        match fp.read(&mut buffer)? {
             0 => break,
-            count => hasher.update( &buffer[ 0..count ] )
+            count => hasher.update(&buffer[0..count]),
         }
     }
 
-    Ok( format!( "{}", hasher.digest() ) )
+    Ok(format!("{}", hasher.digest()))
 }
 
-pub fn process_wasm_file< P: AsRef< Path > + ?Sized >( uses_old_stdweb: bool, runtime: RuntimeKind, build: &BuildConfig, prepend_js: &str, target_dir: &Path, artifact: &P ) -> Option< PathBuf > {
-    if !build.triplet.as_ref().map( |triplet| triplet == "wasm32-unknown-unknown" ).unwrap_or( false ) {
+pub fn process_wasm_file<P: AsRef<Path> + ?Sized>(
+    uses_old_stdweb: bool,
+    runtime: RuntimeKind,
+    build: &BuildConfig,
+    prepend_js: &str,
+    target_dir: &Path,
+    artifact: &P,
+) -> Option<PathBuf> {
+    if !build
+        .triplet
+        .as_ref()
+        .map(|triplet| triplet == "wasm32-unknown-unknown")
+        .unwrap_or(false)
+    {
         return None;
     }
 
     let path = artifact.as_ref();
-    if !path.extension().map( |ext| ext == "wasm" ).unwrap_or( false ) {
+    if !path.extension().map(|ext| ext == "wasm").unwrap_or(false) {
         return None;
     }
 
     if !uses_old_stdweb {
-        new_process_wasm_file( runtime, prepend_js, target_dir, path )
+        new_process_wasm_file(runtime, prepend_js, target_dir, path)
     } else {
-        old_process_wasm_file( runtime, prepend_js, path )
+        old_process_wasm_file(runtime, prepend_js, path)
     }
 }
 
-fn new_process_wasm_file( runtime: RuntimeKind, prepend_js: &str, target_dir: &Path, path: &Path ) -> Option< PathBuf > {
-    eprintln!( "    Processing {:?}...", path.file_name().unwrap() );
+fn new_process_wasm_file(
+    runtime: RuntimeKind,
+    prepend_js: &str,
+    target_dir: &Path,
+    path: &Path,
+) -> Option<PathBuf> {
+    eprintln!("    Processing {:?}...", path.file_name().unwrap());
 
-    let mut module = parity_wasm::deserialize_file( &path ).unwrap();
-    let mut ctx = Context::from_module( module );
-    let snippets = wasm_js_snippet::process( target_dir, &mut ctx );
-    let intrinsics = wasm_intrinsics::process( &mut ctx );
-    let main_symbol = wasm_export_main::process( &mut ctx );
-    let exports = wasm_js_export::process( &mut ctx );
-    wasm_export_main::process( &mut ctx );
-    wasm_export_table::process( &mut ctx );
-    wasm_hook_grow::process( &mut ctx );
+    let mut module = parity_wasm::deserialize_file(&path).unwrap();
+    let mut ctx = Context::from_module(module);
+    let snippets = wasm_js_snippet::process(target_dir, &mut ctx);
+    let intrinsics = wasm_intrinsics::process(&mut ctx);
+    let main_symbol = wasm_export_main::process(&mut ctx);
+    let exports = wasm_js_export::process(&mut ctx);
+    wasm_export_main::process(&mut ctx);
+    wasm_export_table::process(&mut ctx);
+    wasm_hook_grow::process(&mut ctx);
     module = ctx.into_module();
 
     // TODO: Remove this once we stop losing information when we process the `.wasm` file.
     //       (That is - migrate the `#[js_export]` macro to use another mechanism.)
-    let _ = fs::remove_file( path );
+    let _ = fs::remove_file(path);
 
-    parity_wasm::serialize_to_file( path, module ).unwrap();
+    parity_wasm::serialize_to_file(path, module).unwrap();
 
-    let mut all_snippets: Vec< _ > = snippets.into_iter().chain( intrinsics.into_iter() ).collect();
-    all_snippets.sort_by( |a, b| a.name.cmp( &b.name ) );
+    let mut all_snippets: Vec<_> = snippets.into_iter().chain(intrinsics.into_iter()).collect();
+    all_snippets.sort_by(|a, b| a.name.cmp(&b.name));
 
-    let js_path = path.with_extension( "js" );
-    let js = wasm_runtime::generate_js( runtime, main_symbol, path, prepend_js, &all_snippets, &exports );
-    let mut fp = File::create( &js_path ).unwrap();
-    fp.write_all( js.as_bytes() ).unwrap();
+    let js_path = path.with_extension("js");
+    let js = wasm_runtime::generate_js(
+        runtime,
+        main_symbol,
+        path,
+        prepend_js,
+        &all_snippets,
+        &exports,
+    );
+    let mut fp = File::create(&js_path).unwrap();
+    fp.write_all(js.as_bytes()).unwrap();
 
-    eprintln!( "    Finished processing of {:?}!", path.file_name().unwrap() );
-    Some( js_path )
-
+    eprintln!(
+        "    Finished processing of {:?}!",
+        path.file_name().unwrap()
+    );
+    Some(js_path)
 }
 
-fn old_process_wasm_file( runtime: RuntimeKind, prepend_js: &str, path: &Path ) -> Option< PathBuf > {
-    let wasm_hash = get_sha1sum( path ).expect( "cannot calculate sha1sum of the `.wasm` file" );
-    debug!( "Hash of {:?}: {}", path, wasm_hash );
+fn old_process_wasm_file(runtime: RuntimeKind, prepend_js: &str, path: &Path) -> Option<PathBuf> {
+    let wasm_hash = get_sha1sum(path).expect("cannot calculate sha1sum of the `.wasm` file");
+    debug!("Hash of {:?}: {}", path, wasm_hash);
 
-    let js_path = path.with_extension( "js" );
-    let metadata_path = path.with_extension( "cargoweb-metadata" );
+    let js_path = path.with_extension("js");
+    let metadata_path = path.with_extension("cargoweb-metadata");
     if js_path.exists() && metadata_path.exists() {
         // TODO: This is just a quick workaround. We should always regenerate the `.js` file.
-        let fp = File::open( &metadata_path ).expect( "cannot open the metadata file" );
-        let metadata: Metadata = serde_json::from_reader( fp ).expect( "cannot deserialize metadata; delete your `target` directory" );
+        let fp = File::open(&metadata_path).expect("cannot open the metadata file");
+        let metadata: Metadata = serde_json::from_reader(fp)
+            .expect("cannot deserialize metadata; delete your `target` directory");
         if metadata.wasm_hash == wasm_hash {
-            debug!( "Skipping `.js` generation and `.wasm` processing!" );
-            return Some( js_path );
+            debug!("Skipping `.js` generation and `.wasm` processing!");
+            return Some(js_path);
         }
     }
 
-    eprintln!( "    Garbage collecting {:?}...", path.file_name().unwrap() );
-    wasm_gc::run( &path, &path );
+    eprintln!("    Garbage collecting {:?}...", path.file_name().unwrap());
+    wasm_gc::run(&path, &path);
 
-    eprintln!( "    Processing {:?}...", path.file_name().unwrap() );
-    let mut module = parity_wasm::deserialize_file( &path ).unwrap();
-    let mut ctx = Context::from_module( module );
-    let snippets = wasm_inline_js::process_and_extract( &mut ctx );
-    let intrinsics = wasm_intrinsics::process( &mut ctx );
-    let main_symbol = wasm_export_main::process( &mut ctx );
-    let exports = wasm_js_export::process( &mut ctx );
-    wasm_export_main::process( &mut ctx );
-    wasm_export_table::process( &mut ctx );
-    wasm_hook_grow::process( &mut ctx );
+    eprintln!("    Processing {:?}...", path.file_name().unwrap());
+    let mut module = parity_wasm::deserialize_file(&path).unwrap();
+    let mut ctx = Context::from_module(module);
+    let snippets = wasm_inline_js::process_and_extract(&mut ctx);
+    let intrinsics = wasm_intrinsics::process(&mut ctx);
+    let main_symbol = wasm_export_main::process(&mut ctx);
+    let exports = wasm_js_export::process(&mut ctx);
+    wasm_export_main::process(&mut ctx);
+    wasm_export_table::process(&mut ctx);
+    wasm_hook_grow::process(&mut ctx);
     module = ctx.into_module();
 
     // At least on Linux when a `.wasm` file is built it's
@@ -138,24 +165,40 @@ fn old_process_wasm_file( runtime: RuntimeKind, prepend_js: &str, path: &Path ) 
     //
     // So we forcefully remove the `$name.wasm` here before
     // overwriting it to get rid of the hard-link.
-    let _ = fs::remove_file( path );
+    let _ = fs::remove_file(path);
 
-    parity_wasm::serialize_to_file( path, module ).unwrap();
+    parity_wasm::serialize_to_file(path, module).unwrap();
 
-    let mut all_snippets: Vec< _ > = snippets.into_iter().chain( intrinsics.into_iter() ).collect();
+    let mut all_snippets: Vec<_> = snippets.into_iter().chain(intrinsics.into_iter()).collect();
 
-    all_snippets.sort_by( |a, b| a.name.cmp( &b.name ) );
+    all_snippets.sort_by(|a, b| a.name.cmp(&b.name));
 
-    let js = wasm_runtime::generate_js( runtime, main_symbol, path, prepend_js, &all_snippets, &exports );
-    let mut fp = File::create( &js_path ).unwrap();
-    fp.write_all( js.as_bytes() ).unwrap();
+    let js = wasm_runtime::generate_js(
+        runtime,
+        main_symbol,
+        path,
+        prepend_js,
+        &all_snippets,
+        &exports,
+    );
+    let mut fp = File::create(&js_path).unwrap();
+    fp.write_all(js.as_bytes()).unwrap();
 
-    let new_wasm_hash = get_sha1sum( path ).expect( "cannot calculate sha1sum of the `.wasm` file" );
-    debug!( "New hash of {:?}: {}", path, new_wasm_hash );
+    let new_wasm_hash = get_sha1sum(path).expect("cannot calculate sha1sum of the `.wasm` file");
+    debug!("New hash of {:?}: {}", path, new_wasm_hash);
 
-    let fp = File::create( &metadata_path ).unwrap();
-    serde_json::to_writer( fp, &Metadata { wasm_hash: new_wasm_hash } ).unwrap();
+    let fp = File::create(&metadata_path).unwrap();
+    serde_json::to_writer(
+        fp,
+        &Metadata {
+            wasm_hash: new_wasm_hash,
+        },
+    )
+    .unwrap();
 
-    eprintln!( "    Finished processing of {:?}!", path.file_name().unwrap() );
-    Some( js_path )
+    eprintln!(
+        "    Finished processing of {:?}!",
+        path.file_name().unwrap()
+    );
+    Some(js_path)
 }

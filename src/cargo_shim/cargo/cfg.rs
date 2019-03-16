@@ -2,8 +2,8 @@ use std::fmt;
 use std::iter;
 use std::str::{self, FromStr};
 
-use failure;
 use super::CargoResult;
+use failure;
 
 #[derive(Eq, PartialEq, Hash, Ord, PartialOrd, Clone, Debug)]
 pub enum Cfg {
