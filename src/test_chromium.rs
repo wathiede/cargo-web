@@ -101,17 +101,21 @@ pub fn test_in_chromium(
         let server = SimpleServer::new(&"127.0.0.1:0".parse().unwrap(), move |request| {
             let path = request.uri().path();
             if path == "/" || path == "index.html" {
-                response_from_data("text/html", test_index.clone().into_bytes())
+                response_from_data("text/html", test_index.clone().into_bytes(), false)
             } else if path == "/js/app.js" {
                 let data = server_app_js.lock().unwrap().clone();
-                response_from_data("application/javascript", data.into_bytes())
+                response_from_data("application/javascript", data.into_bytes(), false)
             } else if path == "/__cargo-web__/test_runner.js" {
-                response_from_data("application/javascript", TEST_RUNNER.as_bytes().to_vec())
+                response_from_data(
+                    "application/javascript",
+                    TEST_RUNNER.as_bytes().to_vec(),
+                    false,
+                )
             } else {
                 match *server_wasm_url.lock().unwrap() {
                     Some(ref server_wasm_url) if path == *server_wasm_url => {
                         let data = server_app_wasm.lock().unwrap().as_ref().unwrap().clone();
-                        response_from_data("application/wasm", data)
+                        response_from_data("application/wasm", data, false)
                     }
                     _ => response_from_status(StatusCode::NOT_FOUND),
                 }

@@ -18,6 +18,7 @@ use hyper::StatusCode;
 use cargo_shim::{CargoTarget, Profile, TargetKind};
 
 use build::{BuildArgs, PathKind, Project, ShouldTriggerRebuild};
+use http;
 use http_utils::{response_from_data, response_from_file, response_from_status, SimpleServer};
 
 use deployment::{ArtifactKind, Deployment};
@@ -274,13 +275,20 @@ pub fn command_start(
     let target_name = target.name.clone();
     let address = net::SocketAddr::new(host, port);
     let server = SimpleServer::new(&address, move |request| {
+        let gzip = if let Some(v) = request.headers().get(http::header::ACCEPT_ENCODING) {
+            v.as_bytes()
+                .split(|b| b == &b',' || b == &b' ')
+                .any(|w| w == b"gzip")
+        } else {
+            false
+        };
         let path = request.uri().path();
         let path = percent_decode(path.as_bytes()).decode_utf8().unwrap();
         let last_build = last_build.lock().unwrap();
 
         if path == "/__cargo-web__/build_hash" {
             let data = format!("{}", last_build.get_build_hash());
-            return response_from_data("application/text", data.into_bytes());
+            return response_from_data("application/text", data.into_bytes(), gzip);
         }
 
         if path == "/js/app.js" {
@@ -307,15 +315,12 @@ pub fn command_start(
                     }
                 }
             }
-
             match artifact.kind {
                 ArtifactKind::Data(data) => {
-                    return response_from_data(artifact.mime_type, data);
+                    return response_from_data(artifact.mime_type, data, gzip);
                 }
 
-                ArtifactKind::File(fp) => {
-                    return response_from_file(artifact.mime_type, fp);
-                }
+                ArtifactKind::File(fp) => return response_from_file(artifact.mime_type, fp),
             }
         } else {
             response_from_status(StatusCode::NOT_FOUND)

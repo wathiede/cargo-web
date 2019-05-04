@@ -3,14 +3,16 @@ use futures::{Async, Poll};
 use http::response::Builder;
 use hyper::body::Payload;
 use hyper::header::{
-    ACCESS_CONTROL_ALLOW_ORIGIN, CACHE_CONTROL, CONTENT_LENGTH, CONTENT_TYPE, EXPIRES, PRAGMA,
+    ACCESS_CONTROL_ALLOW_ORIGIN, CACHE_CONTROL, CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_TYPE,
+    EXPIRES, PRAGMA,
 };
 use hyper::server::conn::AddrIncoming;
 use hyper::service::{NewService, Service};
 use hyper::{self, Request, Response, Server, StatusCode};
+use libflate::gzip::Encoder;
 use memmap::Mmap;
 use std::fs::File;
-use std::io::Cursor;
+use std::io::{Cursor, Write};
 use std::net::SocketAddr;
 use std::sync::Arc;
 
@@ -130,7 +132,7 @@ pub fn response_from_file(mime_type: &str, fp: File) -> ResponseFuture {
     if let Ok(metadata) = fp.metadata() {
         if metadata.len() == 0 {
             // This is necessary since `Mmap::map` will return an error for empty files.
-            return response_from_data(mime_type, Vec::new());
+            return response_from_data(mime_type, Vec::new(), false);
         }
     }
 
@@ -140,7 +142,7 @@ pub fn response_from_file(mime_type: &str, fp: File) -> ResponseFuture {
             warn!("Mmap failed: {}", error);
             let status = StatusCode::INTERNAL_SERVER_ERROR;
             let message = format!("{}\n\n{}", status, error).into_bytes();
-            let mut response = sync_response_from_data("text/plain", message);
+            let mut response = sync_response_from_data("text/plain", message, false);
             *response.status_mut() = status;
             return Box::new(future::ok(response));
         }
@@ -156,22 +158,34 @@ pub fn response_from_file(mime_type: &str, fp: File) -> ResponseFuture {
     Box::new(future::ok(response.body(body).unwrap()))
 }
 
-fn sync_response_from_data(mime_type: &str, data: Vec<u8>) -> Response<Body> {
+fn sync_response_from_data(mime_type: &str, data: Vec<u8>, gzip: bool) -> Response<Body> {
+    let data = if gzip {
+        let mut encoder = Encoder::new(Vec::new()).unwrap();
+        encoder.write_all(&data).unwrap();
+        encoder.finish().into_result().unwrap()
+    } else {
+        data
+    };
+
     let length = data.len();
     let body: Body = data.into();
     let mut response = Response::builder();
     add_headers(&mut response);
     response.header(CONTENT_TYPE, mime_type);
     response.header(CONTENT_LENGTH, length);
+    if gzip {
+        response.header(CONTENT_ENCODING, "gzip");
+    }
     response.body(body).unwrap()
 }
 
-pub fn response_from_data(mime_type: &str, data: Vec<u8>) -> ResponseFuture {
-    Box::new(future::ok(sync_response_from_data(mime_type, data)))
+pub fn response_from_data(mime_type: &str, data: Vec<u8>, gzip: bool) -> ResponseFuture {
+    Box::new(future::ok(sync_response_from_data(mime_type, data, gzip)))
 }
 
 pub fn response_from_status(status: StatusCode) -> ResponseFuture {
-    let mut response = sync_response_from_data("text/plain", format!("{}", status).into_bytes());
+    let mut response =
+        sync_response_from_data("text/plain", format!("{}", status).into_bytes(), false);
     *response.status_mut() = status;
     Box::new(future::ok(response))
 }
